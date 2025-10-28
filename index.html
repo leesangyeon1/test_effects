@@ -1,173 +1,45 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>기존 점들이 격자 정렬 – 완전 작동 버전</title>
-  <style>
-    * { margin:0; padding:0; box-sizing:border-box; }
-    html, body { height:100%; overflow:hidden; background:#0b1220; }
-    canvas { display:block; }
-    .info {
-      position:fixed; top:16px; left:16px; color:#e5e7eb; font:14px system-ui;
-      background:rgba(15,23,42,0.9); padding:12px 16px; border-radius:12px;
-      backdrop-filter:blur(10px); border:1px solid #1f2937; z-index:10;
-      max-width:320px;
-    }
-    .info h1 { font-size:17px; margin-bottom:6px; }
-    .info p { color:#94a3b8; font-size:13px; line-height:1.5; }
-  </style>
+    <title>VANTA.TOPOLOGY 효과 예제</title>
+    <style>
+        /* 페이지 전체를 채우도록 스타일링 */
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden; /* 스크롤바 제거 */
+        }
+        /* Vanta 효과를 적용할 배경 요소 */
+        #vanta-background {
+            width: 100%;
+            height: 100vh; /* 화면 전체 높이 */
+        }
+    </style>
 </head>
 <body>
 
-<div class="info">
-  <h1>점들이 격자 정렬됩니다</h1>
-  <p>마우스를 움직여 보세요. 근처 점들이 <strong>수직·수평 정렬</strong>되고, 멀어지면 <strong>자연스럽게 흩어집니다</strong>.</p>
-</div>
+    <div id="vanta-background"></div>
 
-<canvas id="canvas"></canvas>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vanta/0.5.24/vanta.topology.min.js"></script>
 
-<!-- 작동 보장된 Three.js CDN -->
-<script src="https://cdn.jsdelivr.net/npm/three@0.167.1/build/three.min.js"></script>
-
-<script>
-  // 캔버스 및 렌더러
-  const canvas = document.getElementById('canvas');
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setClearColor(0x0b1220);
-
-  // 씬 및 카메라
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 200);
-  camera.position.z = 70;
-
-  // 점 설정
-  const GRID_SIZE = 55;
-  const SPACING = 3.2;
-  const TOTAL_POINTS = GRID_SIZE * GRID_SIZE;
-  const positions = new Float32Array(TOTAL_POINTS * 3);
-  const original = new Float32Array(TOTAL_POINTS * 3);
-  const target = new Float32Array(TOTAL_POINTS * 3);
-
-  let mouseX = 0, mouseY = 0;
-  let isHovering = false;
-
-  // 점 생성 (랜덤 + 약간의 노이즈)
-  let i = 0;
-  for (let x = 0; x < GRID_SIZE; x++) {
-    for (let y = 0; y < GRID_SIZE; y++) {
-      const px = (x - GRID_SIZE/2) * SPACING + (Math.random() - 0.5) * 1.8;
-      const py = (y - GRID_SIZE/2) * SPACING + (Math.random() - 0.5) * 1.8;
-      const pz = (Math.random() - 0.5) * 12;
-
-      positions[i] = px;
-      positions[i+1] = py;
-      positions[i+2] = pz;
-
-      original[i] = px;
-      original[i+1] = py;
-      original[i+2] = pz;
-
-      i += 3;
-    }
-  }
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-
-  const material = new THREE.PointsMaterial({
-    color: 0x34d399,
-    size: 1.1,
-    sizeAttenuation: true,
-    transparent: true,
-    opacity: 0.85
-  });
-
-  const pointsObj = new THREE.Points(geometry, material);
-  scene.add(pointsObj);
-
-  // 마우스 이벤트
-  document.addEventListener('pointermove', (e) => {
-    mouseX = (e.clientX / innerWidth) * 2 - 1;
-    mouseY = -(e.clientY / innerHeight) * 2 + 1;
-    isHovering = true;
-  });
-
-  document.addEventListener('pointerleave', () => {
-    isHovering = false;
-  });
-
-  // 리사이즈
-  window.addEventListener('resize', () => {
-    camera.aspect = innerWidth / innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth, innerHeight);
-  });
-
-  // 애니메이션 루프
-  const clock = new THREE.Clock();
-  const INFLUENCE_RADIUS = 18;
-  const ALIGN_STRENGTH = 20;
-
-  function animate() {
-    const pos = geometry.attributes.position.array;
-    const time = clock.getElapsedTime();
-
-    // 부드러운 회전
-    pointsObj.rotation.y = time * 0.04;
-    pointsObj.rotation.x = time * 0.02;
-
-    const mx = mouseX * 70;
-    const my = mouseY * 70;
-
-    if (isHovering) {
-      for (let i = 0; i < TOTAL_POINTS; i++) {
-        const idx = i * 3;
-        const ox = original[idx], oy = original[idx+1], oz = original[idx+2];
-
-        const dx = ox - mx;
-        const dy = oy - my;
-        const dist = Math.hypot(dx, dy);
-
-        if (dist < INFLUENCE_RADIUS) {
-          const force = (1 - dist / INFLUENCE_RADIUS) * ALIGN_STRENGTH;
-          const gridX = Math.round(ox / SPACING) * SPACING;
-          const gridY = Math.round(oy / SPACING) * SPACING;
-
-          target[idx]   = THREE.MathUtils.lerp(pos[idx],   gridX, force);
-          target[idx+1] = THREE.MathUtils.lerp(pos[idx+1], gridY, force);
-          target[idx+2] = THREE.MathUtils.lerp(pos[idx+2], oz, force * 0.4);
-        } else {
-          target[idx]   = ox;
-          target[idx+1] = oy;
-          target[idx+2] = oz;
-        }
-
-        // 부드러운 이동
-        pos[idx]   = THREE.MathUtils.lerp(pos[idx],   target[idx],   0.16);
-        pos[idx+1] = THREE.MathUtils.lerp(pos[idx+1], target[idx+1], 0.16);
-        pos[idx+2] = THREE.MathUtils.lerp(pos[idx+2], target[idx+2], 0.16);
-      }
-    } else {
-      // 복귀
-      for (let i = 0; i < TOTAL_POINTS; i++) {
-        const idx = i * 3;
-        pos[idx]   = THREE.MathUtils.lerp(pos[idx],   original[idx],   0.09);
-        pos[idx+1] = THREE.MathUtils.lerp(pos[idx+1], original[idx+1], 0.09);
-        pos[idx+2] = THREE.MathUtils.lerp(pos[idx+2], original[idx+2], 0.09);
-      }
-    }
-
-    geometry.attributes.position.needsUpdate = true;
-    renderer.render(scene, camera);
-    requestAnimationFrame(animate);
-  }
-
-  // 시작
-  requestAnimationFrame(animate);
-</script>
+    <script>
+        // VANTA.TOPOLOGY 효과 초기화
+        VANTA.TOPOLOGY({
+            el: "#vanta-background", // 효과를 적용할 요소 선택자
+            mouseControls: true,      // 마우스 컨트롤 활성화 (핵심 기능)
+            touchControls: true,      // 터치 컨트롤 활성화
+            gyroControls: false,     // 자이로스코프 컨트롤 비활성화
+            minHeight: 200.00,
+            minWidth: 200.00,
+            scale: 1.00,
+            scaleMobile: 1.00,
+            color: 0x3f9eff,        // 점과 선의 색상
+            backgroundColor: 0x121a24 // 배경색
+        });
+    </script>
 
 </body>
 </html>
