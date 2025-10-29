@@ -1,45 +1,382 @@
 <!DOCTYPE html>
-<html>
+<html lang="ko">
 <head>
-    <title>VANTA.TOPOLOGY 효과 예제</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vanta NET with Light Propagation</title>
     <style>
-        /* 페이지 전체를 채우도록 스타일링 */
-        html, body {
+        body, html {
             margin: 0;
             padding: 0;
             width: 100%;
             height: 100%;
-            overflow: hidden; /* 스크롤바 제거 */
+            overflow: hidden;
         }
-        /* Vanta 효과를 적용할 배경 요소 */
-        #vanta-background {
+        #vanta-container {
             width: 100%;
-            height: 100vh; /* 화면 전체 높이 */
+            height: 100%;
+            position: relative;
+        }
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        #vanta-bg {
+            width: 100%;
+            height: 100%;
+        }
+        #glow-canvas {
+            pointer-events: none;
+            z-index: 1;
+        }
+        .info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            font-family: 'Arial', sans-serif;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 20px;
+            border-radius: 10px;
+            z-index: 100;
+            backdrop-filter: blur(10px);
+        }
+        .info h3 {
+            margin: 0 0 10px 0;
+            font-size: 24px;
+        }
+        .info p {
+            margin: 5px 0;
+            font-size: 14px;
+            opacity: 0.9;
         }
     </style>
 </head>
 <body>
-
-    <div id="vanta-background"></div>
+    <div id="vanta-container">
+        <div id="vanta-bg"></div>
+        <canvas id="glow-canvas"></canvas>
+    </div>
+    <div class="info">
+        <h3>✨ Vanta NET + Light Flow</h3>
+        <p>마우스를 점 근처로 이동하세요</p>
+    </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/vanta/0.5.24/vanta.topology.min.js"></script>
-
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vanta/0.5.24/vanta.net.min.js"></script>
     <script>
-        // VANTA.TOPOLOGY 효과 초기화
-        VANTA.TOPOLOGY({
-            el: "#vanta-background", // 효과를 적용할 요소 선택자
-            mouseControls: true,      // 마우스 컨트롤 활성화 (핵심 기능)
-            touchControls: true,      // 터치 컨트롤 활성화
-            gyroControls: false,     // 자이로스코프 컨트롤 비활성화
+        // Vanta NET 초기화
+        const vantaEffect = VANTA.NET({
+            el: "#vanta-bg",
+            mouseControls: true,
+            touchControls: true,
+            gyroControls: false,
             minHeight: 200.00,
             minWidth: 200.00,
             scale: 1.00,
             scaleMobile: 1.00,
-            color: 0x3f9eff,        // 점과 선의 색상
-            backgroundColor: 0x121a24 // 배경색
+            color: 0x3fafff,
+            backgroundColor: 0x0a0a1a,
+            points: 10.00,
+            maxDistance: 20.00,
+            spacing: 16.00
         });
-    </script>
 
+        // 글로우 캔버스 설정
+        const glowCanvas = document.getElementById('glow-canvas');
+        const ctx = glowCanvas.getContext('2d');
+        glowCanvas.width = window.innerWidth;
+        glowCanvas.height = window.innerHeight;
+
+        window.addEventListener('resize', () => {
+            glowCanvas.width = window.innerWidth;
+            glowCanvas.height = window.innerHeight;
+        });
+
+        const mouse = { x: null, y: null };
+        const TRIGGER_RADIUS = 50; // 1. 마우스 범위 절반으로 축소 (100 -> 50)
+        const PROPAGATION_DEPTH = 3;
+        let lastTriggerTime = 0;
+        const TRIGGER_COOLDOWN = 1000; // 1초
+
+        document.addEventListener('mousemove', (e) => {
+            mouse.x = e.clientX;
+            mouse.y = e.clientY;
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!vantaEffect || !vantaEffect.points) return;
+
+            let closestPoint = null;
+            let closestDistance = Infinity;
+
+            // 클릭 위치에서 가장 가까운 파티클 찾기
+            vantaEffect.points.forEach(point => {
+                const screenPos = toScreenPosition(point, vantaEffect.camera);
+                if (!screenPos) return;
+
+                const dx = e.clientX - screenPos.x;
+                const dy = e.clientY - screenPos.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < closestDistance) {
+                    closestDistance = distance;
+                    closestPoint = point;
+                }
+            });
+
+            // 가장 가까운 파티클에서 모든 파티클로 전파
+            if (closestPoint) {
+                propagateLightToAll(closestPoint);
+            }
+        });
+
+        // 파티클 상태 추적
+        const particleStates = new Map();
+        const activeFlows = [];
+
+        class LightFlow {
+            constructor(from, to, intensity, onComplete) {
+                this.from = from;
+                this.to = to;
+                this.progress = 0;
+                this.intensity = intensity;
+                this.active = true;
+                this.onComplete = onComplete;
+            }
+
+            update() {
+                this.progress += 0.06;
+                if (this.progress >= 1) {
+                    this.active = false;
+                    // 도착한 파티클 밝히기
+                    const state = particleStates.get(this.to);
+                    if (state) {
+                        state.brightness = Math.max(state.brightness, this.intensity);
+                    }
+                    // 완료 콜백 실행
+                    if (this.onComplete) {
+                        this.onComplete(this.to);
+                    }
+                }
+            }
+
+            draw() {
+                if (!this.active || this.progress >= 1) return;
+
+                const fromScreen = toScreenPosition(this.from, vantaEffect.camera);
+                const toScreen = toScreenPosition(this.to, vantaEffect.camera);
+
+                if (!fromScreen || !toScreen) return;
+
+                const flowX = fromScreen.x + (toScreen.x - fromScreen.x) * this.progress;
+                const flowY = fromScreen.y + (toScreen.y - fromScreen.y) * this.progress;
+
+                // glow 없이 깔끔한 빛만
+                ctx.beginPath();
+                ctx.arc(flowX, flowY, 3, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(255, 255, 255, ${this.intensity})`;
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.arc(flowX, flowY, 5, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(63, 175, 255, ${this.intensity * 0.5})`;
+                ctx.fill();
+            }
+        }
+
+        function toScreenPosition(obj, camera) {
+            if (!obj || !camera) return null;
+            
+            const vector = new THREE.Vector3();
+            obj.getWorldPosition(vector);
+            vector.project(camera);
+
+            const x = (vector.x + 1) * glowCanvas.width / 2;
+            const y = (-vector.y + 1) * glowCanvas.height / 2;
+
+            return { x, y };
+        }
+
+        function propagateLight(startPoint) {
+            if (!vantaEffect || !vantaEffect.points) return;
+
+            const visited = new Set();
+            visited.add(startPoint);
+
+            // 시작 파티클만 즉시 밝히기
+            if (!particleStates.has(startPoint)) {
+                particleStates.set(startPoint, { brightness: 0 });
+            }
+            particleStates.get(startPoint).brightness = 1;
+
+            // 순차 전파 함수
+            function propagateFrom(point, depth, intensity) {
+                if (depth >= PROPAGATION_DEPTH) return;
+
+                const nextIntensity = intensity * 0.1;
+                const neighbors = [];
+
+                // 가까운 파티클 찾기
+                vantaEffect.points.forEach(otherPoint => {
+                    if (visited.has(otherPoint) || point === otherPoint) return;
+
+                    const distance = point.position.distanceTo(otherPoint.position);
+                    if (distance < 20) {
+                        neighbors.push(otherPoint);
+                    }
+                });
+
+                // 각 이웃에 대해 순차적으로 처리
+                neighbors.forEach(neighbor => {
+                    if (!visited.has(neighbor)) {
+                        visited.add(neighbor);
+                        
+                        // 빛이 도착하면 다음 단계 전파
+                        activeFlows.push(new LightFlow(point, neighbor, nextIntensity, (arrivedPoint) => {
+                            propagateFrom(arrivedPoint, depth + 1, nextIntensity);
+                        }));
+                    }
+                });
+            }
+
+            // 시작
+            propagateFrom(startPoint, 0, 1);
+        }
+
+        function propagateLightToAll(startPoint) {
+            if (!vantaEffect || !vantaEffect.points) return;
+
+            const visited = new Set();
+            visited.add(startPoint);
+
+            // 시작 파티클만 즉시 밝히기
+            if (!particleStates.has(startPoint)) {
+                particleStates.set(startPoint, { brightness: 0 });
+            }
+            particleStates.get(startPoint).brightness = 1;
+
+            // 순차 전파 함수
+            function propagateFrom(point, depth) {
+                if (depth > 10) return; // 최대 깊이 제한
+
+                const nextBrightness = Math.max(0, 1 - ((depth + 1) * 0.1));
+                const neighbors = [];
+
+                // 가까운 파티클 찾기
+                vantaEffect.points.forEach(otherPoint => {
+                    if (visited.has(otherPoint) || point === otherPoint) return;
+
+                    const distance = point.position.distanceTo(otherPoint.position);
+                    if (distance < 20) {
+                        neighbors.push(otherPoint);
+                    }
+                });
+
+                // 각 이웃에 대해 순차적으로 처리
+                neighbors.forEach(neighbor => {
+                    if (!visited.has(neighbor)) {
+                        visited.add(neighbor);
+                        
+                        // 빛이 도착하면 다음 단계 전파
+                        activeFlows.push(new LightFlow(point, neighbor, nextBrightness, (arrivedPoint) => {
+                            propagateFrom(arrivedPoint, depth + 1);
+                        }));
+                    }
+                });
+            }
+
+            // 시작
+            propagateFrom(startPoint, 0);
+        }
+
+        function checkMouseTrigger() {
+            if (!vantaEffect || !vantaEffect.points || mouse.x === null) return;
+
+            const currentTime = Date.now();
+            if (currentTime - lastTriggerTime < TRIGGER_COOLDOWN) return;
+
+            let closestPoint = null;
+            let closestDistance = Infinity;
+
+            // 마우스에 가장 가까운 파티클 찾기
+            vantaEffect.points.forEach(point => {
+                const screenPos = toScreenPosition(point, vantaEffect.camera);
+                if (!screenPos) return;
+
+                const dx = mouse.x - screenPos.x;
+                const dy = mouse.y - screenPos.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < TRIGGER_RADIUS && distance < closestDistance) {
+                    closestDistance = distance;
+                    closestPoint = point;
+                }
+            });
+
+            // 가장 가까운 파티클에서만 빛 전파
+            if (closestPoint) {
+                propagateLight(closestPoint);
+                lastTriggerTime = currentTime;
+            }
+        }
+
+        function drawGlows() {
+            if (!vantaEffect || !vantaEffect.points) return;
+
+            vantaEffect.points.forEach(point => {
+                const state = particleStates.get(point);
+                if (!state || state.brightness < 0.01) return;
+
+                const screenPos = toScreenPosition(point, vantaEffect.camera);
+                if (!screenPos) return;
+
+                const size = 4 + state.brightness * 8;
+
+                // 파티클 글로우
+                ctx.shadowBlur = 20 * state.brightness;
+                ctx.shadowColor = `rgba(63, 175, 255, ${state.brightness})`;
+
+                const gradient = ctx.createRadialGradient(
+                    screenPos.x, screenPos.y, 0,
+                    screenPos.x, screenPos.y, size * 2
+                );
+                gradient.addColorStop(0, `rgba(255, 255, 255, ${state.brightness * 0.8})`);
+                gradient.addColorStop(0.5, `rgba(63, 175, 255, ${state.brightness * 0.6})`);
+                gradient.addColorStop(1, 'rgba(63, 175, 255, 0)');
+
+                ctx.fillStyle = gradient;
+                ctx.fillRect(screenPos.x - size * 2, screenPos.y - size * 2, size * 4, size * 4);
+
+                ctx.shadowBlur = 0;
+
+                // 밝기 감소
+                state.brightness *= 0.9;
+            });
+        }
+
+        function animate() {
+            ctx.clearRect(0, 0, glowCanvas.width, glowCanvas.height);
+
+            // 빛 흐름 업데이트 및 그리기
+            for (let i = activeFlows.length - 1; i >= 0; i--) {
+                activeFlows[i].update();
+                activeFlows[i].draw();
+                if (!activeFlows[i].active) {
+                    activeFlows.splice(i, 1);
+                }
+            }
+
+            drawGlows();
+            checkMouseTrigger();
+
+            requestAnimationFrame(animate);
+        }
+
+        setTimeout(() => {
+            animate();
+        }, 1000);
+    </script>
 </body>
 </html>
